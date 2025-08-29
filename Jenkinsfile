@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        nodejs "NodeJS"        // configure NodeJS in Jenkins -> Global Tool Configuration
+        nodejs "NodeJS"
     }
 
     stages {
@@ -38,25 +38,26 @@ pipeline {
             }
             steps {
                 withSonarQubeEnv('MySonarQubeServer') {
-                    sh '''
-                    $SONAR_SCANNER_HOME/bin/sonar-scanner \
+                    sh """
+                    \$SONAR_SCANNER_HOME/bin/sonar-scanner \
                       -Dsonar.projectKey=juice-shop \
                       -Dsonar.sources=. \
-                      -Dsonar.host.url=$SONAR_HOST_URL \
-                      -Dsonar.login=$SONAR_AUTH_TOKEN
-                    '''
+                      -Dsonar.host.url=http://sonarqube:9000 \
+                      -Dsonar.login=\$SONAR_AUTH_TOKEN
+                    """
                 }
             }
         }
 
         stage('OWASP ZAP Scan') {
             steps {
-                sh '''
+                sh """
                 docker run --rm \
-                  -v $(pwd):/zap/wrk/:rw \
+                  -v \$(pwd):/zap/wrk/:rw \
+                  --network devsecops-net \
                   -t ghcr.io/zaproxy/zaproxy:stable \
-                  zap-baseline.py -t http://host.docker.internal:3000 -r zap_report.html
-                '''
+                  zap-baseline.py -t http://juice-shop:3000 -r zap_report.html
+                """
             }
         }
     }
