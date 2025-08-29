@@ -1,49 +1,69 @@
 pipeline {
     agent any
+
     tools {
-        maven 'Maven3'   // Configure Maven under Jenkins Tools
-        jdk 'jdk11'      // Configure JDK 11
+        nodejs "NodeJS"        // configure NodeJS in Jenkins -> Global Tool Configuration
     }
-    environment {
-        SONARQUBE = 'SonarQubeServer' // Configure in Jenkins global settings
-    }
+
     stages {
-        stage('Build') {
+        stage('Checkout Juice Shop Source') {
             steps {
-                sh 'mvn clean install -DskipTests'
+                git branch: 'master',
+                    url: 'https://github.com/d4nt0x14o/juice-shop.git',
+                    credentialsId: 'git-https-credentials'
             }
         }
-        stage('SAST - SonarQube (Fortify later)') {
+
+        stage('Install Dependencies') {
             steps {
-                withSonarQubeEnv('SonarQubeServer') {
-                    sh 'mvn sonar:sonar'
+                sh 'npm install'
+            }
+        }
+
+        stage('Dependency Check') {
+            steps {
+                sh '''
+                docker run --rm \
+                  -v $(pwd):/src \
+                  -v $(pwd)/odc-data:/report \
+                  owasp/dependency-check \
+                  --scan /src --format "ALL" --out /report
+                '''
+            }
+        }
+
+        stage('SonarQube Scan') {
+            environment {
+                SONAR_SCANNER_HOME = tool 'SonarScanner'
+            }
+            steps {
+                withSonarQubeEnv('MySonarQubeServer') {
+                    sh '''
+                    $SONAR_SCANNER_HOME/bin/sonar-scanner \
+                      -Dsonar.projectKey=juice-shop \
+                      -Dsonar.sources=. \
+                      -Dsonar.host.url=$SONAR_HOST_URL \
+                      -Dsonar.login=$SONAR_AUTH_TOKEN
+                    '''
                 }
             }
         }
-        stage('SCA - Dependency Check (Sonatype later)') {
+
+        stage('OWASP ZAP Scan') {
             steps {
-                sh 'dependency-check.sh --scan . --format XML --out reports/'
-            }
-        }
-        stage('Deploy to Staging') {
-            steps {
-                sh 'docker run -d --name juice-shop-test -p 3001:3000 bkimminich/juice-shop'
-            }
-        }
-        stage('DAST - OWASP ZAP (Qualys later)') {
-            steps {
-                sh 'docker run --rm owasp/zap2docker-stable zap-baseline.py -t http://host.docker.internal:3001 -r zap_report.html'
+                sh '''
+                docker run --rm \
+                  -v $(pwd):/zap/wrk/:rw \
+                  -t ghcr.io/zaproxy/zaproxy:stable \
+                  zap-baseline.py -t http://host.docker.internal:3000 -r zap_report.html
+                '''
             }
         }
     }
+
     post {
         always {
-            archiveArtifacts artifacts: '**/reports/*, zap_report.html', fingerprint: true
-        }
-        failure {
-            mail to: 'dteo@starhub.com',
-                 subject: "Pipeline Failed",
-                 body: "Security pipeline failed. Check Jenkins logs."
+            archiveArtifacts artifacts: '**/*.html, **/*.xml, **/*.json', allowEmptyArchive: true
         }
     }
 }
